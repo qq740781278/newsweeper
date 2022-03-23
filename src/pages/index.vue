@@ -1,95 +1,69 @@
 <script setup lang="ts">
-import type { BlockState } from '~/types'
-const WIDTH = 10;
-const HEIGHT = 10;
-const data = reactive(
-  Array.from({ length: HEIGHT }, (_, y) => {
-    return Array.from({ length: WIDTH }, (_, x): BlockState => {
-      return { x, y, adjacentMines: 0, revealed: false, mine: false };
-    });
-  })
-);
-const directions = [
-  [-1, 1],
-  [-1, 0],
-  [-1, -1],
-  [1, 1],
-  [1, 0],
-  [1, -1],
-  [0, 1],
-  [0, -1]
-];
+// import { isDev, toggleDev } from '~/composables'
+import { GamePlay } from '~/composables/logic'
 
-const getSiblings = (block: BlockState) => {
-  const { x, y } = block
-  return directions.map(([dx, dy]) => {
-    const x2 = dx + x;
-    const y2 = dy + y;
-    if (x2 < 0 || x2 >= WIDTH || y2 < 0 || y2 >= HEIGHT) return undefined;
-    return data[y2][x2]
-  }).filter(Boolean) as BlockState[];
-}
-const expendZero = (block: BlockState) => {
-  if (block.adjacentMines) return
-  getSiblings(block).forEach(b => {
-    if (b.revealed) return
-    b.revealed = true
-    expendZero(b)
-  });
-}
-const updateNumbers = () => {
-  data.forEach((row) => {
-    row.forEach((block) => {
-      if (block.mine) return;
-      getSiblings(block).forEach((b) => {
-        b.mine && block.adjacentMines++
-      })
-    });
-  });
-};
+const play = new GamePlay(9, 9, 10)
 
-const generateMines = (initial: BlockState) => {
-  for (const row of data) {
-    for (const block of row) {
-      if (Math.abs(initial.x - block.x) < 2)
-        continue
-      if (Math.abs(initial.y - block.y) < 2)
-        continue
-      block.mine = Math.random() < 0.3
-    }
+const now = $(useNow())
+const timerMS = $computed(() => Math.round(((play.state.value.endMS ?? +now) - (play.state.value.startMS ?? +now)) / 1000))
+
+useStorage('vuesweeper-state', play.state)
+const state = $computed(() => play.board)
+
+const mineRest = $computed(() => {
+  if (!play.mineGenerated)
+    return play.mines
+  return play.blocks.reduce((a, b) => a - (b.flagged ? 1 : 0), play.mines)
+})
+function newGame(difficulty: 'easy' | 'medium' | 'hard') {
+  switch (difficulty) {
+    case 'easy':
+      play.reset(9, 9, 10)
+      break
+    case 'medium':
+      play.reset(16, 16, 40)
+      break
+    case 'hard':
+      play.reset(16, 30, 99)
+      break
   }
-};
+}
 
-let mineGenerated = false
-let isDev = true
-
-const onClick = (block: BlockState) => {
-  block.revealed = true
-  if (!mineGenerated) {
-    generateMines(block)
-    updateNumbers()
-    mineGenerated = true
-  }
-  expendZero(block)
-};
-const rClick = (block: BlockState) => {
-  if(block.revealed) return
-  block.flagged = !block.flagged
-};
+watchEffect(() => {
+  play.checkGameState()
+})
 </script>
 
 <template>
   <div>
     MineSweeper
-    <div v-for="row, y in data" :key="y" flex="~" justify-center items-center>
+    <div flex="~ gap1" justify-center p4>
+      <button btn @click="play.reset()">New Game</button>
+      <button btn @click="newGame('easy')">Easy</button>
+      <button btn @click="newGame('medium')">Medium</button>
+      <button btn @click="newGame('hard')">Hard</button>
+    </div>
+
+    <div flex="~ gap-10" justify-center>
+      <div font-mono text-2xl flex="~ gap-1" items-center>
+        <div i-carbon-timer />
+        {{ timerMS }}
+      </div>
+      <div font-mono text-2xl flex="~ gap-1" items-center>
+        <div i-mdi-mine />
+        {{ mineRest }}
+      </div>
+    </div>
+    <div v-for="row, y in state" :key="y" flex="~" justify-center items-center>
       <MineBlock
         v-for=" block in row"
         :key="block.x"
         :block="block"
-        :is-dev="isDev"
-        @lrclick="onClick"
-        @rclick="rClick"
-      ></MineBlock>
+        @click="play.onClick(block)"
+        @lrclick="play.autoExpand(block)"
+        @contextmenu.prevent="play.onRightClick(block)"
+      />
     </div>
+    <Confetti :passed="play.state.value.status === 'won'" />
   </div>
 </template>
